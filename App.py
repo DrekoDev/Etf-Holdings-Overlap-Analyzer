@@ -5,6 +5,14 @@ from collections import defaultdict
 import plotly.express as px
 import plotly.graph_objects as go
 
+#st.set_page_config(
+#    page_title="Analyseur d'Overlap ETF",
+#    page_icon="📊",
+ #   layout="wide"
+#)
+
+#st.title("📊 Analyseur d'Overlap ETF")
+#st.markdown("**Analysez les chevauchements dans votre portefeuille d'ETFs**")
 
 CSV_FILE_PATH = "holdings_xd_processed.csv"
 
@@ -31,11 +39,9 @@ def load_etf_holdings(etf_symbols):
         # Filtrer seulement les ETFs sélectionnés
         df = df[df['ETF_Symbol'].isin(etf_symbols)]
         
-        # Nettoyer les données
         df = df.dropna(subset=['ETF_Symbol', 'Ticker', 'Weight_Percent'])
         df = df[df['Weight_Percent'] > 0]
         
-        # Nettoyer les colonnes
         df['ETF_Symbol'] = df['ETF_Symbol'].str.strip()
         df['Ticker'] = df['Ticker'].str.strip()
         df['Weight_Percent'] = pd.to_numeric(df['Weight_Percent'], errors='coerce')
@@ -93,7 +99,9 @@ def calculate_overlap(portfolio_weights, holdings_data):
             portfolio_ticker_weight = (holding_weight / 100) * (etf_weight / 100)
             overlaps[ticker] += portfolio_ticker_weight
             
+            # Stocker les détails pour l'affichage
             if ticker not in ticker_details:
+                # Récupérer le nom de la company depuis les données originales
                 ticker_row = holdings_data[(holdings_data['ETF_Symbol'] == etf_symbol) & 
                                         (holdings_data['Ticker'] == ticker)].iloc[0]
                 ticker_details[ticker] = {
@@ -104,12 +112,40 @@ def calculate_overlap(portfolio_weights, holdings_data):
             
             ticker_details[ticker]['etfs'].append({
                 'etf': etf_symbol,
-                'weight_in_etf': holding_weight,  
+                'weight_in_etf': holding_weight,  # Maintenant c'est le poids agrégé
                 'weight_in_portfolio': portfolio_ticker_weight * 100
             })
             ticker_details[ticker]['total_weight'] = overlaps[ticker] * 100
     
     return overlaps, ticker_details, etf_holdings
+
+def calculate_relative_overlap(portfolio_weights, pairwise_similarities):
+    """Calcule l'overlap relatif basé sur la similarité moyenne pondérée"""
+    
+    etf_list = list(portfolio_weights.keys())
+    total_weighted_similarity = 0.0
+    total_weight = 0.0
+    
+    # Pour chaque paire d'ETFs
+    for i in range(len(etf_list)):
+        for j in range(i + 1, len(etf_list)):
+            etf_a, etf_b = etf_list[i], etf_list[j]
+            
+            # Poids de cette paire = produit des allocations
+            pair_weight = (portfolio_weights[etf_a] / 100) * (portfolio_weights[etf_b] / 100)
+            
+            # Récupérer la similarité
+            if (etf_a, etf_b) in pairwise_similarities:
+                similarity = pairwise_similarities[(etf_a, etf_b)]
+            elif (etf_b, etf_a) in pairwise_similarities:
+                similarity = pairwise_similarities[(etf_b, etf_a)]
+            else:
+                similarity = 0.0
+            
+            total_weighted_similarity += similarity * pair_weight
+            total_weight += pair_weight
+    
+    return total_weighted_similarity / total_weight if total_weight > 0 else 0.0
 
 def load_custom_css():
     st.markdown("""
@@ -268,6 +304,7 @@ def render_custom_header():
     """, unsafe_allow_html=True)
 
 def main():
+    # Appeler la fonction au début de main()
     load_custom_css()
     render_custom_header()
 
@@ -281,8 +318,13 @@ def main():
         st.error("Impossible de charger la liste des ETFs. Vérifiez le fichier CSV.")
         return
     
+    # Préparer la liste des options pour les selectbox
     available_etfs = [""] + list(available_etfs_info.keys())  # Option vide en premier
     
+    # Interface directe : une ligne par ETF
+    #st.subheader("Sélection des ETFs et Allocation")
+    
+    # Initialiser le nombre d'ETFs dans le state si pas encore fait
     if 'num_etfs' not in st.session_state:
         st.session_state['num_etfs'] = 2
     
@@ -311,6 +353,7 @@ def main():
             )
         
         with col2:
+            # Input pour l'allocation
             weight = st.number_input(
                 "Allocation (%)",
                 min_value=0.0,
@@ -366,37 +409,9 @@ def main():
                         
                         # Calculer les similarités par paire
                         pairwise_similarities = calculate_pairwise_similarity(portfolio_weights, etf_holdings)
+                        # Calculer l'overlap relatif
+                        relative_overlap = calculate_relative_overlap(portfolio_weights, pairwise_similarities)
                     
-                    # Taux d'Overlap = Σ min(wi(A), wi(B), wi(C)...) pour tous les titres communs
-                    
-                    overlap_rate = 0
-                    etf_list = list(portfolio_weights.keys())
-                    
-                    # Trouver tous les tickers qui apparaissent dans au moins 2 ETFs
-                    all_tickers = set()
-                    for etf_symbol in etf_list:
-                        all_tickers.update(etf_holdings[etf_symbol].keys())
-                    
-                    # Pour chaque ticker, calculer son overlap
-                    for ticker in all_tickers:
-                        ticker_weights = []
-                        
-                        # Collecter le poids de ce ticker dans chaque ETF (0 si absent)
-                        for etf_symbol in etf_list:
-                            if ticker in etf_holdings[etf_symbol]:
-                                # Poids dans le portefeuille = poids dans ETF × allocation ETF
-                                weight_in_portfolio = (etf_holdings[etf_symbol][ticker] / 100) * (portfolio_weights[etf_symbol] / 100)
-                                ticker_weights.append(weight_in_portfolio)
-                            else:
-                                ticker_weights.append(0.0)
-                        
-                        # Ne compter que si le ticker apparaît dans au moins 2 ETFs
-                        non_zero_weights = [w for w in ticker_weights if w > 0]
-                        if len(non_zero_weights) >= 2:
-                            # Prendre le minimum de tous les poids non-nuls
-                            overlap_rate += min(non_zero_weights)
-                    
-                    overlap_rate = overlap_rate * 100  # Convertir en pourcentage
                     
                     if overlaps:
                         st.markdown("<h1 style='text-align: center;'>📈 Résultats de l'Analyse</h1>", unsafe_allow_html=True)
@@ -405,31 +420,34 @@ def main():
                         st.subheader("📊 Taux d'Overlap Global")
                         
                         # Calculer le taux d'overlap "parlant" = taux × nombre d'ETFs
-                        overlap_rate_intuitive = overlap_rate * len(etf_list)
+                        overlap_rate_intuitive = relative_overlap
                         
                         col1, col2 = st.columns([1, 2])
                         
                         with col1:
+                            # Affichage plus grand et centré de la métrique
+                            #st.markdown("### Similarité du portefeuille")
                             st.markdown(f"# {overlap_rate_intuitive:.1f}%")
                             
                             # Code couleur basé sur le taux
-                            if overlap_rate_intuitive < 15:
+                            if overlap_rate_intuitive < 5:
                                 color = "🟢"
                                 status = "Excellente diversification"
-                            elif overlap_rate_intuitive < 35:
-                                color = "🟢"
+                            elif overlap_rate_intuitive < 15:
+                                color = "🟡" 
                                 status = "Bonne diversification"
-                            elif overlap_rate_intuitive < 65:
+                            elif overlap_rate_intuitive < 30:
                                 color = "🟠"
-                                status = "Overlap modéré"
+                                status = "Diversification à améliorer"
                             else:
                                 color = "🔴"
-                                status = "Overlap élevé"
+                                status = "Redondance élevée"
                             
                             st.markdown(f"{color} {status}")
+                            st.markdown(f"**Interprétation :** {overlap_rate_intuitive:.1f}% de votre portefeuille n'apporte aucune diversification")
                         
                         with col2:
-
+                            # Indicateur graphique de similarité
                             fig_gauge = go.Figure(go.Indicator(
                                 mode = "gauge+number",
                                 value = overlap_rate_intuitive,
@@ -439,10 +457,10 @@ def main():
                                     'axis': {'range': [None, 100]},
                                     'bar': {'color': "darkblue"},
                                     'steps': [
-                                        {'range': [0, 15], 'color': "green"},           # Vert : Bonne diversification
-                                        {'range': [15, 35], 'color': "darkgreen"},     # Vert foncé : Diversification correcte
-                                        {'range': [35, 65], 'color': "orange"},        # Orange : Overlap modéré
-                                        {'range': [65, 100], 'color': "red"}           # Rouge : Overlap élevé
+                                        {'range': [0, 5], 'color': "green"},      # Excellent
+                                        {'range': [5, 15], 'color': "lightgreen"}, # Bon
+                                        {'range': [15, 30], 'color': "orange"},    # À améliorer  
+                                        {'range': [30, 100], 'color': "red"}       # Problématique
                                     ],
                                     'threshold': {
                                         'line': {'color': "darkred", 'width': 4},
@@ -454,9 +472,9 @@ def main():
                             fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
                             st.plotly_chart(fig_gauge, use_container_width=True)
                         
-                        # DEUXIÈME : Matrice de Similarité (si 3+ ETFs)
+                        etf_list = list(portfolio_weights.keys())
+
                         if len(etf_list) >= 3:
-                            st.subheader("🔍 Matrice de Similarité par Paire")
                             
                             # Créer une matrice colorée avec style
                             similarity_data = []
@@ -479,11 +497,11 @@ def main():
                                 x=etf_list,
                                 y=etf_list,
                                 colorscale=[
-                                    [0.0, "green"],     
-                                    [0.15, "green"],    
-                                    [0.35, "darkgreen"], 
-                                    [0.65, "orange"],   
-                                    [1.0, "red"]       
+                                    [0.0, "green"],      # 0%
+                                    [0.20, "green"],     # 20%
+                                    [0.40, "lightgreen"], # 40%  
+                                    [0.60, "orange"],    # 60%
+                                    [1.0, "red"]         # 100%
                                 ],
                                 zmin=0,
                                 zmax=100,
@@ -555,11 +573,11 @@ def main():
                                 fig = go.Figure()
                                 
                                 fig.add_trace(go.Bar(
-                                    x=weights,
-                                    y=tickers,
+                                    x=weights,  # Utiliser directement la liste des poids
+                                    y=tickers,  # Utiliser directement la liste des tickers
                                     orientation='h',
                                     marker_color='lightblue',
-                                    text=[f"{w:.3f}%" for w in weights],
+                                    text=[f"{w:.3f}%" for w in weights],  # Afficher les valeurs sur les barres
                                     textposition='outside'
                                 ))
                                 
@@ -569,6 +587,7 @@ def main():
                                     yaxis_title="Ticker",
                                     height=400,
                                     showlegend=False,
+                                    # Inverser l'ordre pour avoir le plus gros en haut
                                     yaxis={'categoryorder': 'array', 'categoryarray': list(reversed(tickers))}
                                 )
                                 
