@@ -536,7 +536,6 @@ def main():
                         with col1:
                             st.subheader("🏆 Top 10 des Positions Overlappées")
                             # Après le calcul, ajouter :
-                            st.write("DEBUG - Détails pour vérification :")
                             for ticker, details in ticker_details.items():
                                 if len(details['etfs']) > len(portfolio_weights):
                                     st.write(f"❌ {ticker}: {len(details['etfs'])} ETFs détectés mais seulement {len(portfolio_weights)} dans le portefeuille")
