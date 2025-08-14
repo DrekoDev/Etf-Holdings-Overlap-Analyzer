@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 #st.title("📊 Analyseur d'Overlap ETF")
 #st.markdown("**Analysez les chevauchements dans votre portefeuille d'ETFs**")
 
+# Fichier CSV en dur (vous pouvez changer le chemin)
 CSV_FILE_PATH = "holdings_xd_processed.csv"
 
 def get_available_etfs():
@@ -39,9 +40,11 @@ def load_etf_holdings(etf_symbols):
         # Filtrer seulement les ETFs sélectionnés
         df = df[df['ETF_Symbol'].isin(etf_symbols)]
         
+        # Nettoyer les données
         df = df.dropna(subset=['ETF_Symbol', 'Ticker', 'Weight_Percent'])
         df = df[df['Weight_Percent'] > 0]
         
+        # Nettoyer les colonnes
         df['ETF_Symbol'] = df['ETF_Symbol'].str.strip()
         df['Ticker'] = df['Ticker'].str.strip()
         df['Weight_Percent'] = pd.to_numeric(df['Weight_Percent'], errors='coerce')
@@ -146,6 +149,66 @@ def calculate_relative_overlap(portfolio_weights, pairwise_similarities):
             total_weight += pair_weight
     
     return total_weighted_similarity / total_weight if total_weight > 0 else 0.0
+
+def calculate_portfolio_stats(portfolio_weights, holdings_data):
+    """Calcule les statistiques globales du portefeuille"""
+    stats = {}
+    
+    # Nombre total de holdings par ETF
+    holdings_per_etf = {}
+    for etf_symbol in portfolio_weights.keys():
+        etf_data = holdings_data[holdings_data['ETF_Symbol'] == etf_symbol]
+        # Compter les tickers uniques pour cet ETF
+        unique_holdings = etf_data['Ticker'].nunique()
+        holdings_per_etf[etf_symbol] = unique_holdings
+    
+    # Nombre total de holdings du portefeuille (somme)
+    total_holdings = sum(holdings_per_etf.values())
+    
+    # Nombre de holdings uniques (sans doublons)
+    all_tickers = set()
+    for etf_symbol in portfolio_weights.keys():
+        etf_data = holdings_data[holdings_data['ETF_Symbol'] == etf_symbol]
+        all_tickers.update(etf_data['Ticker'].unique())
+    unique_holdings_portfolio = len(all_tickers)
+    
+    # NOUVEAU : Statistiques pays et secteurs
+    # Calculer les poids pondérés par pays et secteur
+    country_weights = {}
+    sector_weights = {}
+    
+    for etf_symbol, etf_weight in portfolio_weights.items():
+        etf_data = holdings_data[holdings_data['ETF_Symbol'] == etf_symbol]
+        
+        # Grouper par ticker pour éviter les doublons, puis sommer par pays/secteur
+        for ticker in etf_data['Ticker'].unique():
+            ticker_rows = etf_data[etf_data['Ticker'] == ticker]
+            ticker_weight_in_etf = ticker_rows['Weight_Percent'].sum()  # Poids total du ticker dans l'ETF
+            ticker_weight_in_portfolio = (ticker_weight_in_etf / 100) * (etf_weight / 100)
+            
+            # Pays (prendre le premier car un ticker = un pays)
+            country = ticker_rows['Country'].iloc[0] if not ticker_rows['Country'].isna().all() else 'Unknown'
+            if country not in country_weights:
+                country_weights[country] = 0
+            country_weights[country] += ticker_weight_in_portfolio
+            
+            # Secteur (prendre le premier car un ticker = un secteur)
+            sector = ticker_rows['Industry_Display'].iloc[0] if not ticker_rows['Industry_Display'].isna().all() else 'Unknown'
+            if sector not in sector_weights:
+                sector_weights[sector] = 0
+            sector_weights[sector] += ticker_weight_in_portfolio
+    
+    # Convertir en pourcentages
+    country_weights = {k: v * 100 for k, v in country_weights.items()}
+    sector_weights = {k: v * 100 for k, v in sector_weights.items()}
+    
+    stats['holdings_per_etf'] = holdings_per_etf
+    stats['total_holdings'] = total_holdings
+    stats['unique_holdings'] = unique_holdings_portfolio
+    stats['country_weights'] = country_weights
+    stats['sector_weights'] = sector_weights
+    
+    return stats
 
 def load_custom_css():
     st.markdown("""
@@ -302,6 +365,191 @@ def render_custom_header():
         <p>Analysez les chevauchements dans votre portefeuille d'ETFs</p>
     </div>
     """, unsafe_allow_html=True)
+
+def render_portfolio_overview(portfolio_stats, portfolio_weights):
+    """Affiche la section Vue d'ensemble du portefeuille"""
+    
+    # Créer 3 colonnes pour les métriques
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("**📊 Holdings totaux**")
+        st.markdown(f"# {portfolio_stats['total_holdings']}")
+    
+    with col2:
+        st.markdown("**🎯 Holdings uniques**")
+        st.markdown(f"# {portfolio_stats['unique_holdings']}")
+    
+    with col3:
+        st.markdown("**📈 ETFs sélectionnés**")
+        st.markdown(f"# {len(portfolio_weights)}")
+    
+    st.markdown("---")  # Séparateur
+    
+    # Détail par ETF
+    st.markdown("##### Détail par ETF")
+    etf_detail_data = []
+    for etf, count in portfolio_stats['holdings_per_etf'].items():
+        etf_detail_data.append({
+            'ETF': etf,
+            'Nombre de holdings': count,
+            'Allocation (%)': portfolio_weights[etf]
+        })
+    
+    etf_detail_df = pd.DataFrame(etf_detail_data)
+    st.dataframe(etf_detail_df, use_container_width=True, hide_index=True)
+
+def render_geographic_and_sector_analysis(portfolio_stats):
+    """Affiche l'analyse géographique et sectorielle"""
+    st.subheader("🌍 Répartition Géographique et Sectorielle")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        
+        # Préparer les données pays (top 10)
+        country_data = portfolio_stats['country_weights']
+        # Filtrer les valeurs Unknown et très petites
+        filtered_countries = {k: v for k, v in country_data.items() if k != 'Unknown' and v > 0.1}
+        top_countries = dict(sorted(filtered_countries.items(), key=lambda x: x[1], reverse=True)[:10])
+        
+        if top_countries:
+            # Extraire les données dans l'ordre
+            countries = list(top_countries.keys())
+            weights = list(top_countries.values())
+            
+            # Créer le graphique avec go.Figure comme pour les positions overlappées
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                x=weights,  # Utiliser directement la liste des poids
+                y=countries,  # Utiliser directement la liste des pays
+                orientation='h',
+                marker_color='lightblue',
+                text=[f"{w:.1f}%" for w in weights],  # Afficher les valeurs sur les barres
+                textposition='outside'
+            ))
+            
+            fig.update_layout(
+                title="Top 10 des Pays (% du portefeuille)",
+                xaxis_title="% du portefeuille",
+                yaxis_title="Pays",
+                height=400,
+                showlegend=False,
+                # Inverser l'ordre pour avoir le plus gros en haut
+                yaxis={'categoryorder': 'array', 'categoryarray': list(reversed(countries))}
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Aucune donnée pays disponible")
+    
+    with col2:
+        
+        # Préparer les données secteurs (top 10) - FILTRER Unknown et ignorés
+        sector_data = portfolio_stats['sector_weights']
+        filtered_sectors = {k: v for k, v in sector_data.items() 
+                          if k not in ['Unknown', 'Ticker .XD ignoré'] and v > 0.1}
+        top_sectors = dict(sorted(filtered_sectors.items(), key=lambda x: x[1], reverse=True)[:10])
+        
+        if top_sectors:
+            # Extraire les données dans l'ordre
+            sectors = list(top_sectors.keys())
+            weights = list(top_sectors.values())
+            
+            # Créer le graphique avec go.Figure comme pour les positions overlappées
+            fig = go.Figure()
+            
+            fig.add_trace(go.Bar(
+                x=weights,  # Utiliser directement la liste des poids
+                y=sectors,  # Utiliser directement la liste des secteurs
+                orientation='h',
+                marker_color='lightcoral',
+                text=[f"{w:.1f}%" for w in weights],  # Afficher les valeurs sur les barres
+                textposition='outside'
+            ))
+            
+            fig.update_layout(
+                title="Top 10 des Secteurs (% du portefeuille)",
+                xaxis_title="% du portefeuille",
+                yaxis_title="Secteur",
+                height=400,
+                showlegend=False,
+                # Inverser l'ordre pour avoir le plus gros en haut
+                yaxis={'categoryorder': 'array', 'categoryarray': list(reversed(sectors))}
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Aucune donnée secteur disponible")
+
+def render_top_holdings(portfolio_weights, holdings_data):
+    """Affiche le top 30 des holdings du portefeuille"""
+    st.subheader("📈 Top 30 des Holdings du Portefeuille")
+    
+    # Calculer le poids de chaque holding dans le portefeuille
+    all_holdings = {}
+    
+    for etf_symbol, etf_weight in portfolio_weights.items():
+        etf_data = holdings_data[holdings_data['ETF_Symbol'] == etf_symbol]
+        
+        # Grouper par ticker pour éviter les doublons
+        for ticker in etf_data['Ticker'].unique():
+            ticker_rows = etf_data[etf_data['Ticker'] == ticker]
+            ticker_weight_in_etf = ticker_rows['Weight_Percent'].sum()  # Poids total du ticker dans l'ETF
+            ticker_weight_in_portfolio = (ticker_weight_in_etf / 100) * (etf_weight / 100) * 100  # En pourcentage
+            
+            if ticker not in all_holdings:
+                # Récupérer les infos de la première ligne pour ce ticker
+                first_row = ticker_rows.iloc[0]
+                all_holdings[ticker] = {
+                    'ticker': ticker,
+                    'company_name': first_row.get('Company_Name', ticker) or ticker,
+                    'country': first_row.get('Country', 'Unknown') or 'Unknown',
+                    'sector': first_row.get('Industry_Display', 'Unknown') or 'Unknown',
+                    'weight_in_portfolio': 0,
+                    'etfs': []
+                }
+            
+            all_holdings[ticker]['weight_in_portfolio'] += ticker_weight_in_portfolio
+            all_holdings[ticker]['etfs'].append({
+                'etf': etf_symbol,
+                'weight_in_etf': ticker_weight_in_etf
+            })
+    
+    # Trier par poids décroissant et prendre le top 30
+    top_holdings = sorted(all_holdings.values(), key=lambda x: x['weight_in_portfolio'], reverse=True)[:30]
+    
+    if top_holdings:
+        # Créer le DataFrame
+        holdings_df = pd.DataFrame([
+            {
+                'Rang': i + 1,
+                'Ticker': holding['ticker'],
+                'Pays': holding['country'],
+                'Secteur': holding['sector'],
+                'Poids Portefeuille (%)': round(holding['weight_in_portfolio'], 3),
+                'Nb ETFs': len(holding['etfs']),
+                'ETFs': ', '.join([etf['etf'] for etf in holding['etfs']])
+            }
+            for i, holding in enumerate(top_holdings)
+        ])
+        
+        # Afficher le tableau avec une hauteur fixe pour le scroll
+        st.dataframe(
+            holdings_df,
+            use_container_width=True,
+            hide_index=True,
+            height=600  # Hauteur fixe pour créer le scroll
+        )
+    
+    else:
+        st.info("Aucun holding trouvé")
+
+###################################################################################################################
+###################################################################################################################
+###################################################################################################################
+
 
 def main():
     # Appeler la fonction au début de main()
@@ -591,9 +839,18 @@ def main():
                                 )
                                 
                                 st.plotly_chart(fig, use_container_width=True)
+
                             else:
                                 st.info("Aucune donnée à afficher.")
-                    
+
+                        st.subheader("📋 Vue d'ensemble du portefeuille")
+                        st.write("")
+                        portfolio_stats = calculate_portfolio_stats(portfolio_weights, holdings_data)
+                        render_portfolio_overview(portfolio_stats, portfolio_weights)
+                        render_geographic_and_sector_analysis(portfolio_stats)
+
+                        render_top_holdings(portfolio_weights, holdings_data)
+
                     else:
                         st.warning("Aucun overlap trouvé avec cette sélection d'ETFs.")
                 else:
