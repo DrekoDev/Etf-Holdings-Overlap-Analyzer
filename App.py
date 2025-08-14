@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 #st.set_page_config(
 #    page_title="Analyseur d'Overlap ETF",
 #    page_icon="📊",
- #   layout="wide"
+#    layout="wide"
 #)
 
 #st.title("📊 Analyseur d'Overlap ETF")
@@ -103,7 +103,7 @@ def calculate_overlap(portfolio_weights, holdings_data):
             if ticker not in ticker_details:
                 # Récupérer le nom de la company depuis les données originales
                 ticker_row = holdings_data[(holdings_data['ETF_Symbol'] == etf_symbol) & 
-                                        (holdings_data['Ticker'] == ticker)].iloc[0]
+                                           (holdings_data['Ticker'] == ticker)].iloc[0]
                 ticker_details[ticker] = {
                     'company_name': ticker_row.get('Company_Name', ticker) or ticker,
                     'etfs': [],
@@ -457,10 +457,10 @@ def main():
                                     'axis': {'range': [None, 100]},
                                     'bar': {'color': "darkblue"},
                                     'steps': [
-                                        {'range': [0, 5], 'color': "green"},      # Excellent
+                                        {'range': [0, 5], 'color': "green"},       # Excellent
                                         {'range': [5, 15], 'color': "lightgreen"}, # Bon
-                                        {'range': [15, 30], 'color': "orange"},    # À améliorer  
-                                        {'range': [30, 100], 'color': "red"}       # Problématique
+                                        {'range': [15, 30], 'color': "orange"},     # À améliorer  
+                                        {'range': [30, 100], 'color': "red"}        # Problématique
                                     ],
                                     'threshold': {
                                         'line': {'color': "darkred", 'width': 4},
@@ -499,7 +499,7 @@ def main():
                                 colorscale=[
                                     [0.0, "green"],      # 0%
                                     [0.20, "green"],     # 20%
-                                    [0.40, "lightgreen"], # 40%  
+                                    [0.40, "lightgreen"],# 40%  
                                     [0.60, "orange"],    # 60%
                                     [1.0, "red"]         # 100%
                                 ],
@@ -526,9 +526,9 @@ def main():
                             
                             st.plotly_chart(fig_matrix, use_container_width=True)
 
-                       # TROISIÈME : Top 10 des positions overlappées
+                        # TROISIÈME : Top 10 des positions overlappées
                         overlapped_positions = [(ticker, weight) for ticker, weight in overlaps.items() 
-                                              if len(ticker_details[ticker]['etfs']) > 1]
+                                                if len(ticker_details[ticker]['etfs']) > 1]
                         top_overlapped = sorted(overlapped_positions, key=lambda x: x[1], reverse=True)[:10]
                         
                         col1, col2 = st.columns([1, 1])
@@ -593,7 +593,78 @@ def main():
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
                                 st.info("Aucune donnée à afficher.")
-                    
+                        
+                        # --- NOUVELLE SECTION : TOP 30 GLOBAL ---
+                        st.markdown("---")
+                        st.subheader("🌍 Top 30 des Plus Grandes Positions du Portefeuille")
+
+                        # 1. Obtenir et trier toutes les positions par leur poids total
+                        all_positions_sorted = sorted(
+                            ticker_details.items(),
+                            key=lambda item: item[1]['total_weight'],
+                            reverse=True
+                        )
+                        top_30_positions = all_positions_sorted[:30]
+
+                        # 2. Créer la mise en page à deux colonnes
+                        col1_top30, col2_top30 = st.columns([1, 1])
+
+                        with col1_top30:
+                            st.write("**Classement des 30 plus grandes lignes**")
+                            if top_30_positions:
+                                # Créer le DataFrame pour l'affichage
+                                top_30_df_data = [
+                                    {
+                                        "Ticker": ticker,
+                                        "Nom": details['company_name'],
+                                        "Poids Total (%)": details['total_weight']
+                                    }
+                                    for ticker, details in top_30_positions
+                                ]
+                                top_30_df = pd.DataFrame(top_30_df_data)
+                                
+                                st.dataframe(
+                                    top_30_df,
+                                    column_config={
+                                        "Poids Total (%)": st.column_config.NumberColumn(format="%.2f%%")
+                                    },
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    height=800 # Hauteur ajustée pour voir plus de lignes
+                                )
+                            else:
+                                st.info("Aucune position à afficher.")
+
+                        with col2_top30:
+                            st.write("**Visualisation des poids**")
+                            if top_30_positions:
+                                # Extraire les données pour le graphique
+                                tickers_top30 = [item[0] for item in top_30_positions]
+                                weights_top30 = [item[1]['total_weight'] for item in top_30_positions]
+
+                                # Créer le graphique à barres horizontales
+                                fig_top30 = go.Figure(go.Bar(
+                                    x=weights_top30,
+                                    y=tickers_top30,
+                                    orientation='h',
+                                    marker_color='lightcoral',
+                                    text=[f"{w:.2f}%" for w in weights_top30],
+                                    textposition='outside'
+                                ))
+
+                                fig_top30.update_layout(
+                                    title="Poids des 30 plus grandes positions",
+                                    xaxis_title="Poids dans le Portefeuille (%)",
+                                    yaxis_title="Ticker",
+                                    height=800, # Hauteur ajustée pour correspondre au tableau
+                                    showlegend=False,
+                                    yaxis={'categoryorder': 'array', 'categoryarray': list(reversed(tickers_top30))}
+                                )
+                                st.plotly_chart(fig_top30, use_container_width=True)
+                            else:
+                                st.info("Aucune donnée à afficher.")
+                        # --- FIN DE LA NOUVELLE SECTION ---
+
                     else:
                         st.warning("Aucun overlap trouvé avec cette sélection d'ETFs.")
                 else:
