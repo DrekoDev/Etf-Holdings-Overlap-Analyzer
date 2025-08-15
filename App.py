@@ -548,48 +548,7 @@ def render_top_holdings(portfolio_weights, holdings_data):
         st.info("Aucun holding trouvé")
 
 
-######### GESTION DE LA SESSION
-
-######### GESTION DE LA SESSION
-PORTFOLIO_FILE = "saved_portfolio.json"
-
-def save_portfolio_locally(portfolio_weights):
-    """Sauvegarde le portfolio localement pour la persistance"""
-    try:
-        portfolio_data = {
-            'portfolio': portfolio_weights,
-            'timestamp': pd.Timestamp.now().isoformat(),
-            'total_etfs': len(portfolio_weights)
-        }
-        with open(PORTFOLIO_FILE, 'w', encoding='utf-8') as f:
-            json.dump(portfolio_data, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        st.error(f"Erreur lors de la sauvegarde: {e}")
-        return False
-
-def load_portfolio_locally():
-    """Charge le portfolio depuis la sauvegarde locale"""
-    try:
-        if os.path.exists(PORTFOLIO_FILE):
-            with open(PORTFOLIO_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get('portfolio', {}), data.get('timestamp', '')
-        return {}, ''
-    except Exception as e:
-        st.error(f"Erreur lors du chargement: {e}")
-        return {}, ''
-
-def delete_portfolio_locally():
-    """Supprime la sauvegarde locale du portfolio"""
-    try:
-        if os.path.exists(PORTFOLIO_FILE):
-            os.remove(PORTFOLIO_FILE)
-        return True
-    except Exception as e:
-        st.error(f"Erreur lors de la suppression: {e}")
-        return False
-
+######### GESTION DE LA SESSION (VERSION SESSION STATE SEULEMENT)
 def generate_portfolio_export(portfolio_weights, available_etfs_info):
     """Génère le JSON d'export du portfolio pour téléchargement"""
     export_data = {
@@ -597,8 +556,8 @@ def generate_portfolio_export(portfolio_weights, available_etfs_info):
         'created_date': pd.Timestamp.now().isoformat(),
         'total_etfs': len(portfolio_weights),
         'total_allocation': sum(portfolio_weights.values()),
-        'portfolio': portfolio_weights,  # Format simple pour compatibilité
-        'etfs': []  # Format détaillé pour affichage
+        'portfolio': portfolio_weights,
+        'etfs': []
     }
     
     for etf, weight in portfolio_weights.items():
@@ -620,17 +579,14 @@ def parse_portfolio_import(uploaded_file):
         data = json.loads(content)
         portfolio = {}
         
-        # Format avec structure détaillée
         if 'etfs' in data and isinstance(data['etfs'], list):
             for etf_data in data['etfs']:
                 symbol = etf_data.get('symbol', '')
                 allocation = etf_data.get('allocation_percent', 0)
                 if symbol:
                     portfolio[symbol] = float(allocation)
-        # Format simple
         elif 'portfolio' in data:
             portfolio = data['portfolio']
-        # Format direct
         else:
             portfolio = data
         
@@ -641,45 +597,27 @@ def parse_portfolio_import(uploaded_file):
         return {}, '', ''
 
 def render_portfolio_management(available_etfs_info):
-    """Gère la sauvegarde/export/import des portfolios"""
+    """Gère l'export/import des portfolios (session state uniquement)"""
     st.markdown("##### 💾 Gestion du Portfolio")
     
-    # Vérifier s'il y a un portfolio sauvegardé localement
-    saved_portfolio, timestamp = load_portfolio_locally()
-    has_saved = bool(saved_portfolio)
-    
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("💾 Sauvegarder", help="Sauvegarde le portfolio"):
+        # Export direct - AJOUTER key="export_portfolio"
+        if st.button("💾 Exporter en JSON", help="Télécharge le portfolio actuel", key="export_portfolio"):
             if 'current_portfolio' in st.session_state and st.session_state['current_portfolio']:
-                # Sauvegarder dans session state et localement
-                st.session_state['saved_portfolio'] = st.session_state['current_portfolio'].copy()
+                json_data = generate_portfolio_export(st.session_state['current_portfolio'], available_etfs_info)
+                filename = f"portfolio_etf_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.json"
                 
-                if save_portfolio_locally(st.session_state['current_portfolio']):
-                    st.success("✅ Portfolio sauvegardé !")
-                    # Marquer qu'on doit montrer le bouton de téléchargement
-                    st.session_state['show_download'] = True
-                    st.rerun()  # ← CHANGÉ ICI
+                st.download_button(
+                    label="⬇️ Télécharger le fichier JSON",
+                    data=json_data,
+                    file_name=filename,
+                    mime="application/json",
+                    key="download_portfolio"
+                )
             else:
-                st.warning("⚠️ Aucun portfolio à sauvegarder")
-        
-        # Afficher le bouton de téléchargement si nécessaire
-        if st.session_state.get('show_download', False) and 'current_portfolio' in st.session_state:
-            json_data = generate_portfolio_export(st.session_state['current_portfolio'], available_etfs_info)
-            filename = f"portfolio_etf_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.json"
-            
-            downloaded = st.download_button(
-                label="⬇️ Télécharger JSON",
-                data=json_data,
-                file_name=filename,
-                mime="application/json",
-                key="download_portfolio"
-            )
-            
-            # Cacher le bouton après téléchargement
-            if downloaded:
-                st.session_state['show_download'] = False
+                st.warning("⚠️ Aucun portfolio à exporter")
     
     with col2:
         # Import JSON
@@ -696,23 +634,19 @@ def render_portfolio_management(available_etfs_info):
             if imported_portfolio:
                 st.success(f"✅ '{portfolio_name}' importé !")
                 
-                if st.button("✅ Appliquer", key="apply_imported"):
+                # Afficher un aperçu
+                with st.expander("👀 Aperçu du portfolio importé"):
+                    total_allocation = sum(imported_portfolio.values())
+                    st.write(f"**Nombre d'ETFs:** {len(imported_portfolio)}")
+                    st.write(f"**Allocation totale:** {total_allocation}%")
+                    
+                    for etf, weight in imported_portfolio.items():
+                        etf_name = available_etfs_info.get(etf, "❓ ETF non reconnu")
+                        st.write(f"• **{etf}** ({etf_name}): {weight}%")
+                
+                if st.button("✅ Appliquer ce portfolio", key="apply_imported"):
                     st.session_state['portfolio_to_load'] = imported_portfolio
-                    st.rerun()  # ← CHANGÉ ICI
-    
-    with col3:
-        if st.button("🗑️ Supprimer", 
-                    disabled=not has_saved,
-                    help="Supprime le portfolio sauvegardé"):
-            if delete_portfolio_locally():
-                if 'saved_portfolio' in st.session_state:
-                    del st.session_state['saved_portfolio']
-                st.success("✅ Portfolio supprimé !")
-                st.rerun()  # ← CHANGÉ ICI
-    
-    # Info du portfolio sauvegardé
-    if has_saved:
-        st.info(f"📁 Portfolio sauvegardé: {len(saved_portfolio)} ETFs (le {pd.to_datetime(timestamp).strftime('%d/%m/%Y à %H:%M') if timestamp else 'date inconnue'})")
+                    st.rerun()
 
 ###################################################################################################################
 ###################################################################################################################
@@ -735,15 +669,6 @@ def main():
     
     # Après avoir chargé available_etfs_info
     available_etfs = [""] + list(available_etfs_info.keys())
-
-    if 'auto_loaded' not in st.session_state:
-        try:
-            saved_portfolio, _ = load_portfolio_locally()
-            if saved_portfolio:
-                st.session_state['portfolio_to_load'] = saved_portfolio
-        except Exception as e:
-            st.warning(f"Erreur lors du chargement automatique: {e}")
-        st.session_state['auto_loaded'] = True
 
     render_portfolio_management(available_etfs_info)
     st.markdown("---")
