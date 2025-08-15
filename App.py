@@ -603,7 +603,7 @@ def render_portfolio_management(available_etfs_info):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Export direct - AJOUTER key="export_portfolio"
+        # Export direct
         if st.button("💾 Exporter en JSON", help="Télécharge le portfolio actuel", key="export_portfolio"):
             if 'current_portfolio' in st.session_state and st.session_state['current_portfolio']:
                 json_data = generate_portfolio_export(st.session_state['current_portfolio'], available_etfs_info)
@@ -632,18 +632,9 @@ def render_portfolio_management(available_etfs_info):
             imported_portfolio, portfolio_name, created_date = parse_portfolio_import(uploaded_file)
             
             if imported_portfolio:
-                st.success(f"✅ '{portfolio_name}' importé !")
+                st.success(f"✅ Portfolio '{portfolio_name}' importé !")
                 
-                # Afficher un aperçu
-                with st.expander("👀 Aperçu du portfolio importé"):
-                    total_allocation = sum(imported_portfolio.values())
-                    st.write(f"**Nombre d'ETFs:** {len(imported_portfolio)}")
-                    st.write(f"**Allocation totale:** {total_allocation}%")
-                    
-                    for etf, weight in imported_portfolio.items():
-                        etf_name = available_etfs_info.get(etf, "❓ ETF non reconnu")
-                        st.write(f"• **{etf}** ({etf_name}): {weight}%")
-                
+                # Bouton pour appliquer
                 if st.button("✅ Appliquer ce portfolio", key="apply_imported"):
                     st.session_state['portfolio_to_load'] = imported_portfolio
                     st.rerun()
