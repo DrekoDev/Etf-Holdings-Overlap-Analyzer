@@ -637,6 +637,7 @@ def render_portfolio_management(available_etfs_info):
                 # Bouton pour appliquer
                 if st.button("✅ Appliquer ce portfolio", key="apply_imported"):
                     st.session_state['portfolio_to_load'] = imported_portfolio
+                    # Pas besoin de modifier num_etfs, on utilise maintenant etf_lines
                     st.rerun()
 
 ###################################################################################################################
@@ -663,24 +664,44 @@ def main():
 
     render_portfolio_management(available_etfs_info)
     st.markdown("---")
-
-    # Initialiser le session state pour le portfolio
+    
     if 'portfolio_to_load' not in st.session_state:
         st.session_state['portfolio_to_load'] = {}
 
     if 'current_portfolio' not in st.session_state:
         st.session_state['current_portfolio'] = {}
 
+    # NOUVEAU : Initialiser la liste des ETFs avec des IDs uniques
+    if 'etf_lines' not in st.session_state:
+        st.session_state['etf_lines'] = [0, 1]  # IDs uniques pour chaque ligne
+        st.session_state['next_id'] = 2  # Prochain ID à utiliser
+
+    # NOUVEAU : Sauvegarder les valeurs actuelles des widgets
+    if 'saved_etf_values' not in st.session_state:
+        st.session_state['saved_etf_values'] = {}
+    if 'saved_weight_values' not in st.session_state:
+        st.session_state['saved_weight_values'] = {}
+
     # Charger le portfolio s'il y en a un
     portfolio_to_load = st.session_state.get('portfolio_to_load', {})
 
-    # Interface directe : une ligne par ETF
-    if 'num_etfs' not in st.session_state:
-        # Si on charge un portfolio, ajuster le nombre d'ETFs
-        if portfolio_to_load:
-            st.session_state['num_etfs'] = max(len(portfolio_to_load), 2)
-        else:
-            st.session_state['num_etfs'] = 2
+    # Si on charge un portfolio, créer les lignes nécessaires ET sauvegarder les valeurs
+    if portfolio_to_load:
+        needed_lines = max(len(portfolio_to_load), 2)
+        if len(st.session_state['etf_lines']) < needed_lines:
+            # Ajouter des lignes si nécessaire
+            while len(st.session_state['etf_lines']) < needed_lines:
+                st.session_state['etf_lines'].append(st.session_state['next_id'])
+                st.session_state['next_id'] += 1
+        
+        # Sauvegarder les valeurs du portfolio importé
+        etfs_list = list(portfolio_to_load.keys())
+        for line_index, line_id in enumerate(st.session_state['etf_lines']):
+            if line_index < len(etfs_list):
+                etf_symbol = etfs_list[line_index]
+                weight = portfolio_to_load[etf_symbol]
+                st.session_state['saved_etf_values'][line_id] = etf_symbol
+                st.session_state['saved_weight_values'][line_id] = weight
 
     portfolio_weights = {}
     selected_etfs = []
@@ -693,49 +714,61 @@ def main():
     with col_header2:
         st.write("**Allocation** (%)")
 
-    for i in range(st.session_state['num_etfs']):
+    # Itérer sur les IDs de lignes au lieu d'indices
+    for line_index, line_id in enumerate(st.session_state['etf_lines']):
         col1, col2, col3 = st.columns([4, 1.5, 0.5])
         
-        # Déterminer les valeurs par défaut
-        default_etf = ""
-        default_weight = 0.0
-        
-        # Si on charge un portfolio, utiliser ces valeurs
-        if portfolio_to_load:
-            etfs_list = list(portfolio_to_load.keys())
-            if i < len(etfs_list):
-                default_etf = etfs_list[i]
-                default_weight = portfolio_to_load[default_etf]
+        # Déterminer les valeurs par défaut depuis saved_values ou portfolio_to_load
+        default_etf = st.session_state['saved_etf_values'].get(line_id, "")
+        default_weight = st.session_state['saved_weight_values'].get(line_id, 0.0)
         
         with col1:
-            # Sélecteur d'ETF avec valeur par défaut
+            # Utiliser line_id pour les clés au lieu de line_index
             selected_etf = st.selectbox(
-                f"ETF {i+1}",
+                f"ETF {line_index+1}",
                 options=available_etfs,
                 index=available_etfs.index(default_etf) if default_etf in available_etfs else 0,
                 format_func=lambda x: f"{x} - {available_etfs_info.get(x, 'N/A')}" if x else "-- Sélectionnez un ETF --",
-                key=f"etf_select_{i}",
+                key=f"etf_select_{line_id}",  # Utiliser line_id
                 label_visibility="collapsed"
             )
         
         with col2:
-            # Input pour l'allocation avec valeur par défaut
             weight = st.number_input(
                 "Allocation (%)",
                 min_value=0.0,
                 max_value=100.0,
-                value=default_weight if default_etf else 0.0,
+                value=default_weight,
                 step=0.1,
-                key=f"weight_{i}",
+                key=f"weight_{line_id}",  # Utiliser line_id
                 disabled=not selected_etf,
                 label_visibility="collapsed"
             )
 
+        # SAUVEGARDER les valeurs actuelles
+        st.session_state['saved_etf_values'][line_id] = selected_etf
+        st.session_state['saved_weight_values'][line_id] = weight
+
         with col3:
-            if st.session_state['num_etfs'] > 2:
-                if st.button("🗑️", key=f"delete_{i}", help="Supprimer cette ligne"):
-                    st.session_state['num_etfs'] -= 1
-                    st.rerun()  # ← CHANGÉ ICI
+            # Afficher le bouton de suppression seulement s'il y a plus de 2 lignes
+            if len(st.session_state['etf_lines']) > 2:
+                if st.button("🗑️", key=f"delete_{line_id}", help="Supprimer cette ligne"):
+                    # Supprimer cette ligne spécifique de la liste
+                    st.session_state['etf_lines'].remove(line_id)
+                    
+                    # Nettoyer les valeurs sauvegardées pour cette ligne
+                    if line_id in st.session_state['saved_etf_values']:
+                        del st.session_state['saved_etf_values'][line_id]
+                    if line_id in st.session_state['saved_weight_values']:
+                        del st.session_state['saved_weight_values'][line_id]
+                    
+                    # Nettoyer aussi les valeurs du session state pour les widgets
+                    if f"etf_select_{line_id}" in st.session_state:
+                        del st.session_state[f"etf_select_{line_id}"]
+                    if f"weight_{line_id}" in st.session_state:
+                        del st.session_state[f"weight_{line_id}"]
+                    
+                    st.rerun()
         
         if selected_etf and selected_etf != "":
             if selected_etf in selected_etfs:
@@ -745,14 +778,26 @@ def main():
                 selected_etfs.append(selected_etf)
                 total_weight += weight
 
+    # Vider portfolio_to_load après l'avoir utilisé
+    if portfolio_to_load:
+        st.session_state['portfolio_to_load'] = {}
+
     # Sauvegarder le portfolio actuel dans session state
     st.session_state['current_portfolio'] = portfolio_weights
     
-    # Bouton pour ajouter une ligne
+    # Bouton pour ajouter une ligne - MODIFIÉ
     col_add1, col_add2, col_add3 = st.columns([4, 1.5, 0.5])
     with col_add1:
         if st.button("+ Ajouter un fonds"):
-            st.session_state['num_etfs'] += 1
+            # Ajouter une nouvelle ligne avec un ID unique
+            new_id = st.session_state['next_id']
+            st.session_state['etf_lines'].append(new_id)
+            st.session_state['next_id'] += 1
+            
+            # Initialiser les valeurs par défaut pour la nouvelle ligne
+            st.session_state['saved_etf_values'][new_id] = ""
+            st.session_state['saved_weight_values'][new_id] = 0.0
+            
             st.rerun()
     
     # Afficher le total et vérification
