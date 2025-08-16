@@ -640,6 +640,13 @@ def render_portfolio_management(available_etfs_info):
                     # Pas besoin de modifier num_etfs, on utilise maintenant etf_lines
                     st.rerun()
 
+def convert_amounts_to_percentages(amounts):
+    """Convertit les montants en euros en pourcentages"""
+    total_amount = sum(amounts.values())
+    if total_amount == 0:
+        return {etf: 0.0 for etf in amounts.keys()}
+    return {etf: (amount / total_amount) * 100 for etf, amount in amounts.items()}
+
 ###################################################################################################################
 ###################################################################################################################
 ###################################################################################################################
@@ -681,6 +688,9 @@ def main():
         st.session_state['saved_etf_values'] = {}
     if 'saved_weight_values' not in st.session_state:
         st.session_state['saved_weight_values'] = {}
+    
+    if 'saved_amount_values' not in st.session_state:
+        st.session_state['saved_amount_values'] = {}
 
     # Charger le portfolio s'il y en a un
     portfolio_to_load = st.session_state.get('portfolio_to_load', {})
@@ -703,16 +713,33 @@ def main():
                 st.session_state['saved_etf_values'][line_id] = etf_symbol
                 st.session_state['saved_weight_values'][line_id] = weight
 
+        # Ajouter un sélecteur de mode de saisie
+    input_mode = st.radio(
+        "Mode de saisie :",
+        options=["Pourcentages (%)", "Montants (€)"],
+        horizontal=True,
+        key="input_mode"
+    )
+
+    # Initialiser les dictionnaires pour stocker les valeurs
+    if 'saved_amount_values' not in st.session_state:
+        st.session_state['saved_amount_values'] = {}
+
     portfolio_weights = {}
+    portfolio_amounts = {}
     selected_etfs = []
     total_weight = 0
+    total_amount = 0
 
     # Créer les colonnes d'en-tête
     col_header1, col_header2, col_header3 = st.columns([4, 1.5, 0.5])
     with col_header1:
         st.write("**Fonds**")
     with col_header2:
-        st.write("**Allocation** (%)")
+        if input_mode == "Pourcentages (%)":
+            st.write("**Allocation** (%)")
+        else:
+            st.write("**Montant** (€)")
 
     # Itérer sur les IDs de lignes au lieu d'indices
     for line_index, line_id in enumerate(st.session_state['etf_lines']):
@@ -721,33 +748,51 @@ def main():
         # Déterminer les valeurs par défaut depuis saved_values ou portfolio_to_load
         default_etf = st.session_state['saved_etf_values'].get(line_id, "")
         default_weight = st.session_state['saved_weight_values'].get(line_id, 0.0)
+        default_amount = st.session_state['saved_amount_values'].get(line_id, 0.0)
         
         with col1:
-            # Utiliser line_id pour les clés au lieu de line_index
             selected_etf = st.selectbox(
                 f"ETF {line_index+1}",
                 options=available_etfs,
                 index=available_etfs.index(default_etf) if default_etf in available_etfs else 0,
                 format_func=lambda x: f"{x} - {available_etfs_info.get(x, 'N/A')}" if x else "-- Sélectionnez un ETF --",
-                key=f"etf_select_{line_id}",  # Utiliser line_id
+                key=f"etf_select_{line_id}",
                 label_visibility="collapsed"
             )
         
         with col2:
-            weight = st.number_input(
-                "Allocation (%)",
-                min_value=0.0,
-                max_value=100.0,
-                value=default_weight,
-                step=0.1,
-                key=f"weight_{line_id}",  # Utiliser line_id
-                disabled=not selected_etf,
-                label_visibility="collapsed"
-            )
+            if input_mode == "Pourcentages (%)":
+                value = st.number_input(
+                    "Allocation (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=default_weight,
+                    step=0.1,
+                    key=f"weight_{line_id}",
+                    disabled=not selected_etf,
+                    label_visibility="collapsed"
+                )
+                weight = value
+                amount = 0.0  # Pas utilisé en mode pourcentage
+            else:
+                value = st.number_input(
+                    "Montant (€)",
+                    min_value=0.0,
+                    value=default_amount,
+                    step=100.0,
+                    key=f"amount_{line_id}",
+                    disabled=not selected_etf,
+                    label_visibility="collapsed"
+                )
+                amount = value
+                weight = 0.0  # Sera calculé plus tard
 
         # SAUVEGARDER les valeurs actuelles
         st.session_state['saved_etf_values'][line_id] = selected_etf
-        st.session_state['saved_weight_values'][line_id] = weight
+        if input_mode == "Pourcentages (%)":
+            st.session_state['saved_weight_values'][line_id] = weight
+        else:
+            st.session_state['saved_amount_values'][line_id] = amount
 
         with col3:
             # Afficher le bouton de suppression seulement s'il y a plus de 2 lignes
@@ -757,16 +802,14 @@ def main():
                     st.session_state['etf_lines'].remove(line_id)
                     
                     # Nettoyer les valeurs sauvegardées pour cette ligne
-                    if line_id in st.session_state['saved_etf_values']:
-                        del st.session_state['saved_etf_values'][line_id]
-                    if line_id in st.session_state['saved_weight_values']:
-                        del st.session_state['saved_weight_values'][line_id]
+                    for key_prefix in ['saved_etf_values', 'saved_weight_values', 'saved_amount_values']:
+                        if line_id in st.session_state.get(key_prefix, {}):
+                            del st.session_state[key_prefix][line_id]
                     
                     # Nettoyer aussi les valeurs du session state pour les widgets
-                    if f"etf_select_{line_id}" in st.session_state:
-                        del st.session_state[f"etf_select_{line_id}"]
-                    if f"weight_{line_id}" in st.session_state:
-                        del st.session_state[f"weight_{line_id}"]
+                    for widget_prefix in [f"etf_select_{line_id}", f"weight_{line_id}", f"amount_{line_id}"]:
+                        if widget_prefix in st.session_state:
+                            del st.session_state[widget_prefix]
                     
                     st.rerun()
         
@@ -774,9 +817,18 @@ def main():
             if selected_etf in selected_etfs:
                 st.error(f"⚠️ L'ETF {selected_etf} est déjà sélectionné sur une autre ligne !")
             else:
-                portfolio_weights[selected_etf] = weight
+                if input_mode == "Pourcentages (%)":
+                    portfolio_weights[selected_etf] = weight
+                    total_weight += weight
+                else:
+                    portfolio_amounts[selected_etf] = amount
+                    total_amount += amount
                 selected_etfs.append(selected_etf)
-                total_weight += weight
+
+    # Convertir les montants en pourcentages si nécessaire
+    if input_mode == "Montants (€)" and portfolio_amounts:
+        portfolio_weights = convert_amounts_to_percentages(portfolio_amounts)
+        total_weight = sum(portfolio_weights.values())
 
     # Vider portfolio_to_load après l'avoir utilisé
     if portfolio_to_load:
