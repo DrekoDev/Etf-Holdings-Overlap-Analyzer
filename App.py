@@ -17,17 +17,36 @@ import os
 #st.markdown("**Analysez les chevauchements dans votre portefeuille d'ETFs**")
 
 CSV_FILE_PATH = "holdings_xd_processed.csv"
+ETFS_FILE_PATH = "etfs.csv"
 
 def get_available_etfs():
-    """Récupère la liste des ETFs disponibles sans charger toutes les données"""
+    """Récupère la liste des ETFs disponibles avec leurs ISIN sans charger toutes les données"""
     try:
         # Lire seulement les colonnes ETF_Symbol et ETF_Name
         df = pd.read_csv(CSV_FILE_PATH, delimiter=';', usecols=['ETF_Symbol', 'ETF_Name'])
         df = df.dropna(subset=['ETF_Symbol'])
         df['ETF_Symbol'] = df['ETF_Symbol'].str.strip()
         
-        # Obtenir les ETFs uniques avec leurs noms
-        etf_info = df.drop_duplicates(subset=['ETF_Symbol']).set_index('ETF_Symbol')['ETF_Name'].to_dict()
+        # Charger les ISIN depuis etfs.csv (séparateur virgule)
+        try:
+            etfs_df = pd.read_csv(ETFS_FILE_PATH, delimiter=',')
+            etfs_df['Symbol'] = etfs_df['Symbol'].str.strip()  # Changé de 'Ticker' à 'Symbol'
+            isin_mapping = etfs_df.set_index('Symbol')['ISIN'].to_dict()  # Changé de 'Ticker' à 'Symbol'
+        except Exception as e:
+            st.warning(f"Impossible de charger les ISIN depuis {ETFS_FILE_PATH}: {e}")
+            isin_mapping = {}
+        
+        # Obtenir les ETFs uniques avec leurs noms et ISIN
+        etf_info = {}
+        for _, row in df.drop_duplicates(subset=['ETF_Symbol']).iterrows():
+            etf_symbol = row['ETF_Symbol']
+            etf_name = row['ETF_Name']
+            isin = isin_mapping.get(etf_symbol, 'ISIN non trouvé')
+            etf_info[etf_symbol] = {
+                'name': etf_name,
+                'isin': isin
+            }
+        
         return etf_info
     except Exception as e:
         st.error(f"Erreur lors de la lecture du fichier : {e}")
@@ -563,7 +582,8 @@ def generate_portfolio_export(portfolio_weights, available_etfs_info):
     for etf, weight in portfolio_weights.items():
         export_data['etfs'].append({
             'symbol': etf,
-            'name': available_etfs_info.get(etf, 'Nom inconnu'),
+            'name': available_etfs_info.get(etf, {}).get('name', 'Nom inconnu'),
+            'isin': available_etfs_info.get(etf, {}).get('isin', 'ISIN inconnu'),
             'allocation_percent': weight
         })
     
@@ -755,7 +775,7 @@ def main():
                 f"ETF {line_index+1}",
                 options=available_etfs,
                 index=available_etfs.index(default_etf) if default_etf in available_etfs else 0,
-                format_func=lambda x: f"{x} - {available_etfs_info.get(x, 'N/A')}" if x else "-- Sélectionnez un ETF --",
+                format_func=lambda x: f"{x} ({available_etfs_info.get(x, {}).get('isin', 'ISIN N/A')}) - {available_etfs_info.get(x, {}).get('name', 'N/A')}" if x else "-- Sélectionnez un ETF --",
                 key=f"etf_select_{line_id}",
                 label_visibility="collapsed"
             )
